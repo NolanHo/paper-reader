@@ -1,10 +1,24 @@
 <div class="lazy-panel-body">
+  <form class="batch-filter-form" action="{{ url_for('index') }}" method="get">
+    <input type="hidden" name="folder" value="{{ current_folder }}">
+    <input type="hidden" name="q" value="{{ query }}">
+    <input type="hidden" name="sort" value="{{ sort_by }}">
+    <input type="hidden" name="show_done" value="{{ '1' if show_done else '' }}">
+    <input type="hidden" name="paper" value="{{ selected_paper.rel_path if selected_paper else '' }}">
+    <input type="hidden" name="tab" value="{{ selected_tab }}">
+    <label class="checkbox-line batch-toggle-line">
+      <input type="checkbox" name="batch_show_done" value="1" {% if batch_show_done %}checked{% endif %} onchange="this.form.submit()">
+      批量列表包含 DONE 文件夹里的论文
+    </label>
+  </form>
+
   {% if filtered_papers %}
     <form class="batch-form" action="{{ url_for('prompt_batch_run_route') }}" method="post">
       <input type="hidden" name="folder" value="{{ current_folder }}">
       <input type="hidden" name="q" value="{{ query }}">
       <input type="hidden" name="sort" value="{{ sort_by }}">
       <input type="hidden" name="show_done" value="{{ '1' if show_done else '' }}">
+      <input type="hidden" name="batch_show_done" value="{{ '1' if batch_show_done else '' }}">
       <input type="hidden" name="paper" value="{{ selected_paper.rel_path if selected_paper else '' }}">
       <input type="hidden" name="tab" value="{{ selected_tab }}">
 

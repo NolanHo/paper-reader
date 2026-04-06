@@ -455,6 +455,23 @@ class PaperReaderAppTests(unittest.TestCase):
         self.assertIn('data-check-action="none" data-check-group="prompt"', html)
         self.assertIn('data-check-action="none" data-check-group="paper"', html)
 
+    def test_batch_section_can_optionally_include_done_papers(self) -> None:
+        self.make_pdf(self.library / "todo.pdf", "Todo Paper")
+        self.make_pdf(self.library / "done.pdf", "Done Paper")
+        self.app.library.toggle_done("done.pdf")
+
+        default_response = self.client.get("/tool-panels/batch-run")
+        include_response = self.client.get("/tool-panels/batch-run?batch_show_done=1")
+
+        default_html = default_response.get_data(as_text=True)
+        include_html = include_response.get_data(as_text=True)
+
+        self.assertEqual(default_response.status_code, 200)
+        self.assertEqual(include_response.status_code, 200)
+        self.assertIn("Todo Paper", default_html)
+        self.assertNotIn("Done Paper", default_html)
+        self.assertIn("Done Paper", include_html)
+
     def test_prompt_tab_renders_markdown_html(self) -> None:
         self.make_pdf(self.library / "paper.pdf", "Test Title")
         prompt = self.app.prompt_store.get_prompt("core-zh")
@@ -733,6 +750,27 @@ class PaperReaderAppTests(unittest.TestCase):
             time.sleep(0.02)
         statuses = {job.status for job in self.app.job_queue.list_jobs(limit=10)}
         self.assertIn("stopped", statuses)
+
+    def test_reindex_route_uses_lightweight_scan_without_metadata_extraction(self) -> None:
+        (self.library / "manual-added.pdf").write_bytes(b"%PDF-1.4\n")
+
+        with patch("src.paper_reader.app.extract_document_metadata", side_effect=AssertionError("should not extract")):
+            response = self.client.post(
+                "/reindex",
+                data={
+                    "folder": "",
+                    "q": "",
+                    "sort": "date_desc",
+                    "paper": "",
+                    "tab": "source",
+                },
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 302)
+        cached = self.app.library.scan()
+        names = [paper.file_name for paper in cached.papers]
+        self.assertIn("manual-added.pdf", names)
 
     def test_render_markdown_supports_rule_and_blockquote(self) -> None:
         rendered = render_markdown("# 标题\n\n> 引用内容\n\n---\n\n1. 第一项\n2. 第二项")

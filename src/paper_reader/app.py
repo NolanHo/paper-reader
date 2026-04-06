@@ -141,7 +141,7 @@ class PaperLibrary:
         with self._scan_lock:
             self._scan_cache = None
 
-    def scan(self, *, force: bool = False) -> ScanResult:
+    def scan(self, *, force: bool = False, lightweight: bool = False) -> ScanResult:
         with self._scan_lock:
             if self._scan_cache is not None and not force:
                 return self._scan_cache
@@ -172,9 +172,9 @@ class PaperLibrary:
                     try:
                         record = PaperRecord(**cached["record"])
                     except TypeError:
-                        record = self._build_record(path, active_prompt_slugs)
+                        record = self._build_record(path, active_prompt_slugs, lightweight=lightweight)
                 else:
-                    record = self._build_record(path, active_prompt_slugs)
+                    record = self._build_record(path, active_prompt_slugs, lightweight=lightweight)
                 papers.append(record)
                 next_cache[rel_path] = {"signature": signature, "record": asdict(record)}
 
@@ -205,16 +205,19 @@ class PaperLibrary:
         except json.JSONDecodeError:
             return {}
 
-    def _build_record(self, path: Path, active_prompt_slugs: list[str]) -> PaperRecord:
+    def _build_record(self, path: Path, active_prompt_slugs: list[str], *, lightweight: bool = False) -> PaperRecord:
         rel_path = path.relative_to(self.root).as_posix()
         folder = path.relative_to(self.root).parent.as_posix()
         if folder == ".":
             folder = ""
 
-        try:
-            meta = extract_document_metadata(path)
-        except Exception:
+        if lightweight:
             meta = {"title": path.stem, "preview_text": "", "full_text": ""}
+        else:
+            try:
+                meta = extract_document_metadata(path)
+            except Exception:
+                meta = {"title": path.stem, "preview_text": "", "full_text": ""}
 
         title = meta.get("title") or path.stem
         preview_text = meta.get("preview_text") or ""
@@ -768,6 +771,7 @@ def redirect_to_index(
     tab: str | None = None,
     *,
     show_done: bool = False,
+    batch_show_done: bool = False,
 ) -> Any:
     params = {"folder": current_folder, "q": query, "sort": sort_by}
     if selected_paper:
@@ -776,6 +780,8 @@ def redirect_to_index(
         params["tab"] = tab
     if show_done:
         params["show_done"] = "1"
+    if batch_show_done:
+        params["batch_show_done"] = "1"
     return redirect(url_for("index", **params))
 
 
@@ -996,11 +1002,20 @@ def create_app(library_root: Path | None = None) -> Flask:
         query = request.args.get("q", "")
         sort_by = request.args.get("sort", "date_desc")
         show_done = request.args.get("show_done", "").strip().lower() in {"1", "true", "yes", "on"}
+        batch_show_done = request.args.get("batch_show_done", "").strip().lower() in {"1", "true", "yes", "on"}
         selected_rel_path = request.args.get("paper", "").strip("/")
         selected_tab = request.args.get("tab", "source")
 
         papers = filter_and_sort_papers(scan.papers, folder=folder, query=query, sort_by=sort_by, show_done=show_done)
-        batch_papers = [paper for paper in papers if not paper.is_done]
+        batch_papers = filter_and_sort_papers(
+            scan.papers,
+            folder=folder,
+            query=query,
+            sort_by=sort_by,
+            show_done=(show_done or batch_show_done),
+        )
+        if not batch_show_done:
+            batch_papers = [paper for paper in batch_papers if not paper.is_done]
         sidebar_groups = build_sidebar_groups(papers, selected_rel_path)
 
         selected_paper = next((item for item in papers if item.rel_path == selected_rel_path), None)
@@ -1015,6 +1030,7 @@ def create_app(library_root: Path | None = None) -> Flask:
             "query": query,
             "sort_by": sort_by,
             "show_done": show_done,
+            "batch_show_done": batch_show_done,
             "selected_rel_path": selected_rel_path,
             "selected_tab": selected_tab,
             "papers": papers,
@@ -1109,6 +1125,7 @@ def create_app(library_root: Path | None = None) -> Flask:
             "query": state["query"],
             "sort_by": state["sort_by"],
             "show_done": state["show_done"],
+            "batch_show_done": state["batch_show_done"],
             "selected_paper": state["selected_paper"],
             "selected_tab": state["selected_tab"],
             "active_prompt_count": len(state["active_prompts"]),
@@ -1387,6 +1404,7 @@ def create_app(library_root: Path | None = None) -> Flask:
         query = request.form.get("q", "")
         sort_by = request.form.get("sort", "date_desc")
         show_done = parse_checkbox(request.form.get("show_done"))
+        batch_show_done = parse_checkbox(request.form.get("batch_show_done"))
         selected_paper = request.form.get("paper", "") or None
         tab = request.form.get("tab", "source")
         rel_paths = request.form.getlist("rel_paths")
@@ -1395,14 +1413,22 @@ def create_app(library_root: Path | None = None) -> Flask:
 
         if not rel_paths:
             flash("请至少选择一篇论文。", "error")
-            return redirect_to_index(current_folder, query, sort_by, selected_paper, tab, show_done=show_done)
+            return redirect_to_index(current_folder, query, sort_by, selected_paper, tab, show_done=show_done, batch_show_done=batch_show_done)
         if not prompt_slugs:
             flash("请至少选择一个 Prompt。", "error")
-            return redirect_to_index(current_folder, query, sort_by, selected_paper, tab, show_done=show_done)
+            return redirect_to_index(current_folder, query, sort_by, selected_paper, tab, show_done=show_done, batch_show_done=batch_show_done)
 
         submission = app.job_queue.submit(rel_paths, prompt_slugs, force=force, source="batch")  # type: ignore[attr-defined]
         flash_submission_summary(submission, action_label="批量后台任务已提交")
-        return redirect_to_index(current_folder, query, sort_by, selected_paper or (rel_paths[0] if rel_paths else None), tab, show_done=show_done)
+        return redirect_to_index(
+            current_folder,
+            query,
+            sort_by,
+            selected_paper or (rel_paths[0] if rel_paths else None),
+            tab,
+            show_done=show_done,
+            batch_show_done=batch_show_done,
+        )
 
     @app.post("/offline-package")
     def offline_package_route() -> Any:
@@ -1542,8 +1568,8 @@ def create_app(library_root: Path | None = None) -> Flask:
         show_done = parse_checkbox(request.form.get("show_done"))
         selected_paper = request.form.get("paper", "") or None
         tab = request.form.get("tab", "source")
-        app.library.scan(force=True)  # type: ignore[attr-defined]
-        flash("已重新扫描论文目录。", "success")
+        app.library.scan(force=True, lightweight=True)  # type: ignore[attr-defined]
+        flash("已完成文件夹快速扫描：目录已更新，未触发 Prompt，也未执行重型解析。", "success")
         return redirect_to_index(current_folder, query, sort_by, selected_paper, tab, show_done=show_done)
 
     return app

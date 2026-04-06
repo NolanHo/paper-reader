@@ -432,9 +432,9 @@
           <input type="hidden" name="show_done" value="{{ '1' if show_done else '' }}">
           <input type="hidden" name="paper" value="{{ selected_paper.rel_path }}">
           <input type="hidden" name="tab" value="{{ selected_tab }}">
-          <div class="tool-hint">如果你在系统外手动增删改了文件，可以在这里重新扫描目录。</div>
+          <div class="tool-hint">如果你在系统外手动增删改了文件，可以在这里做一次轻量文件扫描：只更新目录，不运行 Prompt，也不做重型解析。</div>
           <div class="tool-actions">
-            <button class="secondary" type="submit">重新扫描论文目录</button>
+            <button class="secondary" type="submit">快速扫描 Paper 文件夹</button>
           </div>
         </form>
       </div>
@@ -524,7 +524,7 @@
     <div
       class="lazy-panel-slot"
       data-lazy-panel
-      data-panel-url="{{ url_for('tool_panel_route', panel_name='batch-run', folder=current_folder, q=query, sort=sort_by, paper=selected_paper.rel_path if selected_paper else None, tab=selected_tab, show_done='1' if show_done else None) }}"
+      data-panel-url="{{ url_for('tool_panel_route', panel_name='batch-run', folder=current_folder, q=query, sort=sort_by, paper=selected_paper.rel_path if selected_paper else None, tab=selected_tab, show_done='1' if show_done else None, batch_show_done='1' if batch_show_done else None) }}"
     >
       <p class="lazy-panel-hint">展开时再加载批量补跑面板，减少首屏 HTML 体积。</p>
     </div>

@@ -1,56 +1,172 @@
 # paper-reader
 
-A lightweight paper library and reader for PDF / Word papers.
+一个面向本地论文库的轻量阅读器，支持 PDF / Word 文档管理、浏览器内阅读、Prompt 批量分析、离线阅读包导出，以及后台任务处理。
 
-## Features
+## 主要功能
 
-- Batch upload PDF, `.doc`, and `.docx` files into any subfolder under the library root
-- Automatically scan files already placed in the library by hand
-- Extract paper titles from PDF / Word metadata/content when possible
-- Search by extracted title and original filename
-- Extract arXiv-style dates where possible and sort/group by date
-- Read PDFs inline in the browser; preview `.docx`; open original `.doc` files directly
-- Run on `0.0.0.0:8022`
+- 本地论文库：自动扫描 `PDF / .doc / .docx`
+- 左侧紧凑论文列表，右侧大阅读区
+- PDF 在线阅读、`.docx` 文本预览、`.doc` 原文件打开
+- Prompt 管理：可配置多个 Prompt，结果落盘为本地 Markdown
+- 后台任务队列：自动处理新论文，也可批量补跑历史论文
+- 离线阅读包：导出原论文 + Markdown + 本地 HTML 阅读器
+- DONE 流程：已读论文可移入 `DONE/`
+- 登录保护：进入阅读器前需要用户名和密码
 
-## Library root
+## 默认配置
 
-By default, the app scans and stores papers in:
+### 服务地址
+
+- Host: `0.0.0.0`
+- Port: `8022`
+
+### 默认论文库目录
 
 - `docs/papers/`
 
-That means your existing files in `docs/papers/` are included automatically.
+这个目录中的文件会被自动扫描；你手动放进去的 PDF / Word 文件也会被识别。
 
-## Quick start
+### 默认登录信息
 
-1. Create a virtual environment and install dependencies:
+- 用户名：`admin`
+- 密码：`paperpaperreaderreader12678`
 
-   ```bash
-   python3 -m venv .venv
-   .venv/bin/pip install -r requirements.txt
-   ```
+安全限制：
 
-2. Start the server:
+- 连续输错密码 3 次后，会锁定 5 分钟
 
-   ```bash
-   .venv/bin/python run.py
-   ```
+## 环境准备
 
-3. Open the app in your browser:
+建议使用 Python 3.11+。
 
-   - `http://127.0.0.1:8022`
-   - or from another machine on the same network: `http://<your-host>:8022`
+### 1) 创建虚拟环境
 
-## Notes
+```bash
+python3 -m venv .venv
+```
 
-- `.pdf`: inline browser preview supported
-- `.docx`: text preview supported via XML extraction
-- `.doc`: legacy Word files are accepted and indexed; browsers usually open/download the original file instead of rendering it inline
-- arXiv dates are extracted from text when possible; otherwise the app falls back to deriving month-level dates from arXiv IDs like `2501.12948`
+### 2) 安装依赖
 
-## Tests
+```bash
+.venv/bin/pip install -r requirements.txt
+```
 
-Run the smoke tests with:
+## 如何启动
+
+### 方式一：直接启动
+
+```bash
+.venv/bin/python run.py
+```
+
+启动后访问：
+
+- 本机：`http://127.0.0.1:8022`
+- 局域网其他机器：`http://<你的机器IP>:8022`
+
+### 方式二：在 tmux 中启动
+
+如果你希望服务在后台持续运行，推荐用 tmux：
+
+```bash
+tmux new-session -d -s paper-reader 'cd /path/to/paper-reader && .venv/bin/python run.py'
+```
+
+查看状态：
+
+```bash
+tmux attach -t paper-reader
+```
+
+停止服务：
+
+```bash
+tmux kill-session -t paper-reader
+```
+
+## 项目结构
+
+```text
+paper-reader/
+├── run.py
+├── requirements.txt
+├── src/paper_reader/
+│   ├── app.py
+│   ├── task_queue.py
+│   ├── ai_summary.py
+│   ├── prompt_manager.py
+│   ├── offline_package.py
+│   ├── static/
+│   └── templates/
+├── tests/
+└── docs/papers/   # 本地论文库（默认）
+```
+
+## 论文库说明
+
+支持格式：
+
+- `.pdf`
+- `.doc`
+- `.docx`
+
+说明：
+
+- `.pdf`：浏览器内联阅读
+- `.docx`：会提取文本并做浏览器预览
+- `.doc`：通常不直接内联渲染，但仍可索引并打开原文件
+
+## Prompt 批量补跑
+
+“历史论文批量补跑”面板默认只显示 **不在 `DONE/` 文件夹里的论文**。
+
+如果你希望把已完成论文也纳入批量列表，可以在该面板中勾选：
+
+- `批量列表包含 DONE 文件夹里的论文`
+
+这样就会把 `DONE/` 下符合当前筛选条件的论文也一起显示出来。
+
+## 手动扫描 Paper 文件夹
+
+如果你经常直接在文件系统里操作论文目录，比如：
+
+- 手动复制 PDF 进去
+- 在系统文件管理器里重命名文件
+- 删除某些论文
+
+可以在页面的“文件管理”区域点击：
+
+- `快速扫描 Paper 文件夹`
+
+这个功能的设计目标是：
+
+- 只做文件扫描和目录更新
+- 不自动运行任何 Prompt
+- 不调用任何 AI 模型
+- 不做重型、耗时的解析
+
+也就是说，它更适合在你手动改动了论文目录之后，快速让网页里的论文列表同步更新。
+
+## 离线阅读包
+
+可以导出一个 zip 包，里面包含：
+
+- 原始 PDF / Word 文件
+- 已生成的 Markdown 结果
+- 一个可离线打开的 `index.html`
+
+解压后，直接双击 `index.html` 即可离线阅读。
+
+## 测试
+
+运行测试：
 
 ```bash
 .venv/bin/python -m unittest tests.test_app
 ```
+
+## 开发备注
+
+- 本地论文库 `docs/papers/` 默认不会提交到 Git
+- 日志目录 `logs/` 默认不会提交到 Git
+- 运行过程中生成的本地状态文件也已加入 `.gitignore`

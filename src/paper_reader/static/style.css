@@ -1008,6 +1008,17 @@ button:disabled,
   margin-top: 3px;
 }
 .batch-force-line { margin-top: 4px; }
+.batch-filter-form {
+  margin: 0 0 12px;
+}
+.batch-toggle-line {
+  width: fit-content;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  font-size: 0.8rem;
+}
 
 @media (max-width: 1300px) {
   .prompt-manager-grid { grid-template-columns: 1fr; }
