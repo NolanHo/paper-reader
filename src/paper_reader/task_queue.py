@@ -403,15 +403,20 @@ class PaperJobQueue:
         return None
 
     def snapshot(self, *, rel_path: str | None = None, limit: int = 32) -> dict[str, Any]:
-        jobs = self.list_jobs(limit=limit, rel_path=rel_path)
-        finished_durations = [duration for duration in (self._job_duration_seconds(job) for job in jobs) if duration is not None]
+        with self._lock:
+            all_jobs = list(self._jobs.values())
+        if rel_path:
+            all_jobs = [job for job in all_jobs if job.rel_path == rel_path]
+        all_jobs.sort(key=lambda item: (item.updated_at, item.created_at), reverse=True)
+        jobs = all_jobs[:limit]
+        finished_durations = [duration for duration in (self._job_duration_seconds(job) for job in all_jobs) if duration is not None]
         with self._slot_condition:
             active_executions = self._active_executions
         return {
             "jobs": [asdict(job) for job in jobs],
-            "active_count": sum(1 for job in jobs if job.status in ACTIVE_STATUSES),
-            "queued_count": sum(1 for job in jobs if job.status == "queued"),
-            "running_count": sum(1 for job in jobs if job.status == "running"),
+            "active_count": sum(1 for job in all_jobs if job.status in ACTIVE_STATUSES),
+            "queued_count": sum(1 for job in all_jobs if job.status == "queued"),
+            "running_count": sum(1 for job in all_jobs if job.status == "running"),
             "average_duration_seconds": (
                 round(sum(finished_durations) / len(finished_durations), 2) if finished_durations else None
             ),

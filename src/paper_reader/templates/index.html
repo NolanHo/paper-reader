@@ -524,7 +524,7 @@
     <div
       class="lazy-panel-slot"
       data-lazy-panel
-      data-panel-url="{{ url_for('tool_panel_route', panel_name='batch-run', folder=current_folder, q=query, sort=sort_by, paper=selected_paper.rel_path if selected_paper else None, tab=selected_tab, show_done='1' if show_done else None, batch_show_done='1' if batch_show_done else None) }}"
+      data-panel-url="{{ url_for('tool_panel_route', panel_name='batch-run', folder=current_folder, q=query, sort=sort_by, paper=selected_paper.rel_path if selected_paper else None, tab=selected_tab, show_done='1' if show_done else None, batch_show_done='1' if batch_show_done else None, batch_page=batch_page) }}"
     >
       <p class="lazy-panel-hint">展开时再加载批量补跑面板，减少首屏 HTML 体积。</p>
     </div>
@@ -1045,25 +1045,32 @@
         });
       }
 
-      async function loadLazyPanel(details) {
-        if (!details || details.dataset.panelLoaded === "1" || details.dataset.panelLoading === "1") return;
-        const slot = details.querySelector("[data-lazy-panel]");
-        const panelUrl = slot ? slot.dataset.panelUrl : "";
+      async function loadLazyPanelContent(slot, panelUrl) {
         if (!slot || !panelUrl) return;
+        const details = slot.closest(".tool-panel");
+        if (details && details.dataset.panelLoading === "1") return;
 
-        details.dataset.panelLoading = "1";
+        if (details) details.dataset.panelLoading = "1";
         slot.innerHTML = '<p class="lazy-panel-loading">正在加载…</p>';
         try {
           const response = await fetch(panelUrl, { cache: "no-store" });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           slot.innerHTML = await response.text();
-          details.dataset.panelLoaded = "1";
+          slot.dataset.panelUrl = panelUrl;
+          if (details) details.dataset.panelLoaded = "1";
         } catch (error) {
           console.error("Failed to load tool panel", error);
           slot.innerHTML = '<p class="lazy-panel-error">加载失败，请稍后重试。</p>';
         } finally {
-          details.dataset.panelLoading = "0";
+          if (details) details.dataset.panelLoading = "0";
         }
+      }
+
+      async function loadLazyPanel(details) {
+        if (!details || details.dataset.panelLoaded === "1" || details.dataset.panelLoading === "1") return;
+        const slot = details.querySelector("[data-lazy-panel]");
+        const panelUrl = slot ? slot.dataset.panelUrl : "";
+        await loadLazyPanelContent(slot, panelUrl);
       }
 
       document.querySelectorAll(".tool-panel").forEach((details) => {
@@ -1077,12 +1084,81 @@
       });
 
       document.addEventListener("click", (event) => {
+        const panelLink = event.target.closest("[data-panel-link]");
+        if (panelLink) {
+          const slot = panelLink.closest("[data-lazy-panel]");
+          if (slot) {
+            event.preventDefault();
+            loadLazyPanelContent(slot, panelLink.href).catch((error) => {
+              console.error("Panel link load failed", error);
+            });
+            return;
+          }
+        }
+
         const button = event.target.closest("[data-check-action]");
         if (!button) return;
+        const form = button.closest("form");
         const action = button.dataset.checkAction;
         const group = button.dataset.checkGroup;
-        document.querySelectorAll(`[data-batch-checkbox="${group}"]`).forEach((checkbox) => {
+        (form || document).querySelectorAll(`[data-batch-checkbox="${group}"]`).forEach((checkbox) => {
           checkbox.checked = action === "all";
+        });
+        if (group === "paper" && form) {
+          const selectAllCheckbox = form.querySelector("[data-batch-select-all]");
+          const selectAllToggle = form.querySelector("[data-batch-select-all-toggle]");
+          const scopeHint = form.querySelector("[data-batch-scope-hint]");
+          if (selectAllCheckbox) selectAllCheckbox.checked = false;
+          if (selectAllToggle) selectAllToggle.classList.remove("active");
+          if (scopeHint) {
+            scopeHint.textContent = action === "all"
+              ? "当前将提交本页已勾选的论文。若要跨分页提交，请点击“全选全部”。"
+              : "当前没有勾选任何本页论文；也可以一键选中全部匹配结果。";
+          }
+        }
+      });
+
+      document.addEventListener("change", (event) => {
+        const checkbox = event.target.closest("[data-batch-select-all]");
+        if (!checkbox) return;
+        const form = checkbox.closest("form");
+        if (!form) return;
+        const toggle = form.querySelector("[data-batch-select-all-toggle]");
+        const scopeHint = form.querySelector("[data-batch-scope-hint]");
+        if (toggle) toggle.classList.toggle("active", checkbox.checked);
+        if (scopeHint) {
+          scopeHint.textContent = checkbox.checked
+            ? "已切换为：提交全部匹配结果，不受当前页限制。"
+            : "当前将只提交手动勾选的论文。";
+        }
+      });
+
+      document.addEventListener("change", (event) => {
+        const checkbox = event.target.closest('[data-batch-checkbox="paper"]');
+        if (!checkbox) return;
+        const form = checkbox.closest("form");
+        if (!form) return;
+        const selectAllCheckbox = form.querySelector("[data-batch-select-all]");
+        const selectAllToggle = form.querySelector("[data-batch-select-all-toggle]");
+        const scopeHint = form.querySelector("[data-batch-scope-hint]");
+        if (selectAllCheckbox) selectAllCheckbox.checked = false;
+        if (selectAllToggle) selectAllToggle.classList.remove("active");
+        if (scopeHint) {
+          scopeHint.textContent = "当前将只提交手动勾选的论文。若要跨分页全选，请点击“全选全部”。";
+        }
+      });
+
+      document.addEventListener("submit", (event) => {
+        const form = event.target.closest("[data-panel-form]");
+        if (!form) return;
+        const slot = form.closest("[data-lazy-panel]");
+        if (!slot) return;
+        event.preventDefault();
+        const url = new URL(form.action, window.location.origin);
+        const params = new URLSearchParams(new FormData(form));
+        url.search = params.toString();
+        loadLazyPanelContent(slot, url.toString()).catch((error) => {
+          console.error("Panel form load failed", error);
         });
       });
     })();

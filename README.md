@@ -35,6 +35,28 @@
 
 - 连续输错密码 3 次后，会锁定 5 分钟
 
+### 使用 `.env` 覆盖登录信息
+
+如果项目根目录存在 `.env`，系统会优先读取其中的登录配置；一旦配置了 `.env`，默认用户名和密码将不再生效。
+
+可配置项：
+
+- `PAPER_READER_LOGIN_USERNAME`
+- `PAPER_READER_LOGIN_PASSWORD`
+
+示例：
+
+```dotenv
+PAPER_READER_LOGIN_USERNAME=admin
+PAPER_READER_LOGIN_PASSWORD=replace-with-your-own-password
+```
+
+说明：
+
+- `.env` 已被 `.gitignore` 忽略，不会默认提交到 Git
+- 建议在部署后立即用你自己的密码覆盖默认密码
+- 不要把你自己的真实密码写进 README 或提交到 GitHub
+
 ## 环境准备
 
 建议使用 Python 3.11+。
@@ -57,6 +79,15 @@ python3 -m venv .venv
 
 ```bash
 .venv/bin/python run.py
+```
+
+如果你希望使用自定义登录信息，建议先在项目根目录创建 `.env`：
+
+```bash
+cat > .env <<'EOF'
+PAPER_READER_LOGIN_USERNAME=admin
+PAPER_READER_LOGIN_PASSWORD=replace-with-your-own-password
+EOF
 ```
 
 启动后访问：

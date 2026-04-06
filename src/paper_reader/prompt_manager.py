@@ -240,4 +240,4 @@ def slugify(value: str) -> str:
 
 
 def parse_checkbox(value: str | None) -> bool:
-    return value == "on"
+    return str(value or "").strip().lower() in {"on", "1", "true", "yes"}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import tempfile
 import threading
 import time
@@ -11,7 +12,7 @@ from unittest.mock import patch
 
 from pypdf import PdfWriter
 
-from src.paper_reader.app import create_app
+from src.paper_reader.app import create_app, load_env_file_values
 from src.paper_reader.markdown_render import render_markdown
 
 
@@ -52,6 +53,10 @@ class PaperReaderAppTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         self.library = Path(self.tempdir.name)
+        self.env_file_path = self.library / ".test-no-env"
+        self.env_patch = patch.dict(os.environ, {"PAPER_READER_ENV_FILE": str(self.env_file_path)}, clear=False)
+        self.env_patch.start()
+        self.addCleanup(self.env_patch.stop)
         self.app = create_app(self.library)
         self.app.testing = True
         self.client = self.app.test_client()
@@ -60,12 +65,22 @@ class PaperReaderAppTests(unittest.TestCase):
             session["username"] = "admin"
 
     def tearDown(self) -> None:
+        try:
+            self.app.job_queue.stop_all()
+            for _ in range(50):
+                snapshot = self.app.job_queue.snapshot(limit=5)
+                if snapshot["active_count"] == 0:
+                    break
+                time.sleep(0.01)
+        except Exception:
+            pass
         self.tempdir.cleanup()
 
     def make_pdf(self, path: Path, title: str) -> None:
         writer = PdfWriter()
         writer.add_blank_page(width=72, height=72)
         writer.add_metadata({"/Title": title})
+        path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("wb") as handle:
             writer.write(handle)
 
@@ -143,6 +158,45 @@ class PaperReaderAppTests(unittest.TestCase):
         )
         self.assertEqual(success.status_code, 302)
         self.assertEqual(success.headers["Location"], "/")
+
+    def test_login_credentials_can_be_overridden_by_env_file(self) -> None:
+        env_file = self.library / ".env.custom"
+        env_file.write_text(
+            "PAPER_READER_LOGIN_USERNAME=reader\nPAPER_READER_LOGIN_PASSWORD=custom-secret-456\n",
+            encoding="utf-8",
+        )
+
+        with patch.dict(os.environ, {"PAPER_READER_ENV_FILE": str(env_file)}, clear=False):
+            app = create_app(self.library)
+        app.testing = True
+        client = app.test_client()
+
+        default_login = client.post(
+            "/login",
+            data={"username": "admin", "password": "paperpaperreaderreader12678", "next": "/"},
+            follow_redirects=True,
+        )
+        self.assertIn("用户名或密码错误", default_login.get_data(as_text=True))
+
+        custom_login = client.post(
+            "/login",
+            data={"username": "reader", "password": "custom-secret-456", "next": "/"},
+            follow_redirects=False,
+        )
+        self.assertEqual(custom_login.status_code, 302)
+        self.assertEqual(custom_login.headers["Location"], "/")
+
+    def test_load_env_file_values_parses_simple_dotenv(self) -> None:
+        env_file = self.library / ".env.parse"
+        env_file.write_text(
+            "# comment\nexport PAPER_READER_LOGIN_USERNAME='reader'\nPAPER_READER_LOGIN_PASSWORD=\"secret\"\n",
+            encoding="utf-8",
+        )
+
+        values = load_env_file_values(env_file)
+
+        self.assertEqual(values["PAPER_READER_LOGIN_USERNAME"], "reader")
+        self.assertEqual(values["PAPER_READER_LOGIN_PASSWORD"], "secret")
 
     def test_index_lists_existing_pdf_docx_and_default_prompt(self) -> None:
         self.make_pdf(self.library / "2501.12948.pdf", "DeepSeek-R1")
@@ -432,6 +486,65 @@ class PaperReaderAppTests(unittest.TestCase):
         self.assertTrue((self.library / "paper.pdf").exists())
         self.assertFalse((self.library / done_path).exists())
 
+    def test_scan_excludes_done_papers_by_default(self) -> None:
+        self.make_pdf(self.library / "todo.pdf", "Todo")
+        self.make_pdf(self.library / "done.pdf", "Done")
+        self.app.library.toggle_done("done.pdf")
+
+        default_scan = self.app.library.scan(force=True)
+        full_scan = self.app.library.scan(force=True, include_done=True)
+
+        default_names = [paper.file_name for paper in default_scan.papers]
+        full_names = [paper.file_name for paper in full_scan.papers]
+
+        self.assertIn("todo.pdf", default_names)
+        self.assertNotIn("done.pdf", default_names)
+        self.assertIn("done.pdf", full_names)
+
+    def test_index_reads_from_persisted_active_index_without_rescanning_tree(self) -> None:
+        self.make_pdf(self.library / "cached-paper.pdf", "Cached Paper")
+        self.app.library.rebuild_active_index(lightweight=True)
+
+        fresh_app = create_app(self.library)
+        fresh_app.testing = True
+        client = fresh_app.test_client()
+        with client.session_transaction() as session:
+            session["authenticated"] = True
+            session["username"] = "admin"
+
+        with patch.object(fresh_app.library, "iter_documents", side_effect=AssertionError("should not rescan tree")):
+            response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("cached-paper.pdf", response.get_data(as_text=True))
+
+    def test_include_done_scan_uses_done_index_instead_of_done_filesystem_walk(self) -> None:
+        self.make_pdf(self.library / "todo.pdf", "Todo")
+        self.make_pdf(self.library / "done.pdf", "Done")
+        self.app.library.toggle_done("done.pdf")
+
+        with patch.object(self.app.library, "iter_documents", wraps=self.app.library.iter_documents) as mocked:
+            full_scan = self.app.library.scan(force=True, include_done=True)
+
+        self.assertEqual([call.kwargs.get("include_done", False) for call in mocked.call_args_list], [False])
+        self.assertEqual(sorted(paper.file_name for paper in full_scan.papers), ["done.pdf", "todo.pdf"])
+
+    def test_done_index_updates_for_done_rename_and_delete(self) -> None:
+        self.make_pdf(self.library / "paper.pdf", "Done Index")
+        done_rel_path = self.app.library.toggle_done("paper.pdf")
+
+        renamed_rel_path = self.app.library.rename_file(done_rel_path, "renamed.pdf")
+        after_rename = self.app.library.scan(force=True, include_done=True)
+        rename_names = [paper.file_name for paper in after_rename.papers]
+
+        self.assertEqual(renamed_rel_path, "DONE/renamed.pdf")
+        self.assertIn("renamed.pdf", rename_names)
+        self.assertNotIn("paper.pdf", rename_names)
+
+        self.app.library.delete_file(renamed_rel_path)
+        after_delete = self.app.library.scan(force=True, include_done=True)
+        self.assertNotIn("renamed.pdf", [paper.file_name for paper in after_delete.papers])
+
     def test_batch_section_hides_done_papers_even_when_show_done_enabled(self) -> None:
         self.make_pdf(self.library / "todo.pdf", "Todo Paper")
         self.make_pdf(self.library / "done.pdf", "Done Paper")
@@ -454,6 +567,8 @@ class PaperReaderAppTests(unittest.TestCase):
         self.assertIn('data-check-action="all" data-check-group="paper"', html)
         self.assertIn('data-check-action="none" data-check-group="prompt"', html)
         self.assertIn('data-check-action="none" data-check-group="paper"', html)
+        self.assertIn('data-batch-select-all', html)
+        self.assertIn("全选全部匹配结果", html)
 
     def test_batch_section_can_optionally_include_done_papers(self) -> None:
         self.make_pdf(self.library / "todo.pdf", "Todo Paper")
@@ -471,6 +586,78 @@ class PaperReaderAppTests(unittest.TestCase):
         self.assertIn("Todo Paper", default_html)
         self.assertNotIn("Done Paper", default_html)
         self.assertIn("Done Paper", include_html)
+
+    def test_batch_section_paginates_large_result_sets(self) -> None:
+        for index in range(55):
+            self.make_pdf(self.library / f"paper-{index:02d}.pdf", f"Paper {index:02d}")
+
+        first_response = self.client.get("/tool-panels/batch-run")
+        second_response = self.client.get("/tool-panels/batch-run?batch_page=2")
+        first_html = first_response.get_data(as_text=True)
+        second_html = second_response.get_data(as_text=True)
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertIn("共 55 篇", first_html)
+        self.assertIn("第 1/2 页", first_html)
+        self.assertIn("Paper 54", first_html)
+        self.assertNotIn("Paper 04", first_html)
+        self.assertIn("Paper 04", second_html)
+        self.assertNotIn("Paper 54", second_html)
+
+    def test_prompt_batch_route_can_select_all_filtered_papers_across_pages(self) -> None:
+        for index in range(53):
+            self.make_pdf(self.library / f"paper-{index:02d}.pdf", f"Paper {index:02d}")
+
+        with patch.object(self.app.job_queue, "submit", return_value={"queued": 53, "existing": 0, "skipped": 0, "invalid": 0, "job_ids": [], "jobs": []}) as mocked:
+            response = self.client.post(
+                "/prompt-batch-run",
+                data={
+                    "folder": "",
+                    "q": "",
+                    "sort": "date_desc",
+                    "paper": "paper-52.pdf",
+                    "tab": "source",
+                    "batch_page": "2",
+                    "select_all_filtered": "1",
+                    "prompt_slugs": ["core-zh"],
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        called_rel_paths = mocked.call_args.args[0]
+        self.assertEqual(len(called_rel_paths), 53)
+        self.assertIn("paper-00.pdf", called_rel_paths)
+        self.assertIn("paper-52.pdf", called_rel_paths)
+
+    def test_prompt_batch_route_select_all_filtered_includes_subfolders(self) -> None:
+        for index in range(17):
+            self.make_pdf(self.library / "root" / f"paper-{index:02d}.pdf", f"Root {index:02d}")
+        for index in range(9):
+            self.make_pdf(self.library / "root" / "nested" / f"nested-{index:02d}.pdf", f"Nested {index:02d}")
+
+        with patch.object(self.app.job_queue, "submit", return_value={"queued": 26, "existing": 0, "skipped": 0, "invalid": 0, "job_ids": [], "jobs": []}) as mocked:
+            response = self.client.post(
+                "/prompt-batch-run",
+                data={
+                    "folder": "root",
+                    "q": "",
+                    "sort": "date_desc",
+                    "paper": "root/paper-16.pdf",
+                    "tab": "source",
+                    "batch_page": "1",
+                    "select_all_filtered": "1",
+                    "prompt_slugs": ["core-zh"],
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        called_rel_paths = mocked.call_args.args[0]
+        self.assertEqual(len(called_rel_paths), 26)
+        self.assertIn("root/paper-00.pdf", called_rel_paths)
+        self.assertIn("root/nested/nested-08.pdf", called_rel_paths)
 
     def test_prompt_tab_renders_markdown_html(self) -> None:
         self.make_pdf(self.library / "paper.pdf", "Test Title")
@@ -681,6 +868,35 @@ class PaperReaderAppTests(unittest.TestCase):
         self.assertEqual(response.json["max_concurrency"], 32)
         mocked.assert_called_once_with(rel_path="paper.pdf")
 
+    def test_job_snapshot_counts_all_queued_jobs_even_when_list_is_limited(self) -> None:
+        rel_paths = []
+        for index in range(65):
+            rel_path = f"paper-{index:03d}.pdf"
+            self.make_pdf(self.library / rel_path, f"Paper {index:03d}")
+            rel_paths.append(rel_path)
+
+        release = threading.Event()
+
+        def slow_generate(rel_path, prompt, *, force=False, progress_callback=None, should_abort=None, process_callback=None):
+            while not release.is_set():
+                if should_abort and should_abort():
+                    raise InterruptedError("Job interrupted.")
+                time.sleep(0.02)
+            return self.app.library.prompt_result_path_for(rel_path, prompt.slug), True
+
+        with patch.object(self.app.library, "generate_prompt_result", side_effect=slow_generate):
+            self.app.job_queue.submit(rel_paths, ["core-zh"], force=True, source="batch")
+            for _ in range(100):
+                snapshot = self.app.job_queue.snapshot(limit=32)
+                if snapshot["active_count"] == 65:
+                    break
+                time.sleep(0.02)
+            release.set()
+
+        self.assertEqual(snapshot["active_count"], 65)
+        self.assertEqual(snapshot["queued_count"] + snapshot["running_count"], 65)
+        self.assertEqual(len(snapshot["jobs"]), 32)
+
     def test_job_queue_defaults_to_12_workers(self) -> None:
         self.assertEqual(self.app.job_queue.max_concurrency, 12)
         self.assertEqual(len(self.app.job_queue._workers), 32)
@@ -753,6 +969,12 @@ class PaperReaderAppTests(unittest.TestCase):
 
     def test_reindex_route_uses_lightweight_scan_without_metadata_extraction(self) -> None:
         (self.library / "manual-added.pdf").write_bytes(b"%PDF-1.4\n")
+        done_dir = self.library / "DONE"
+        done_dir.mkdir(parents=True, exist_ok=True)
+        (done_dir / "manual-done.pdf").write_bytes(b"%PDF-1.4\n")
+
+        before = self.app.library.scan(force=True, include_done=True)
+        self.assertNotIn("manual-done.pdf", [paper.file_name for paper in before.papers])
 
         with patch("src.paper_reader.app.extract_document_metadata", side_effect=AssertionError("should not extract")):
             response = self.client.post(
@@ -771,6 +993,8 @@ class PaperReaderAppTests(unittest.TestCase):
         cached = self.app.library.scan()
         names = [paper.file_name for paper in cached.papers]
         self.assertIn("manual-added.pdf", names)
+        with_done = self.app.library.scan(force=True, include_done=True)
+        self.assertIn("manual-done.pdf", [paper.file_name for paper in with_done.papers])
 
     def test_render_markdown_supports_rule_and_blockquote(self) -> None:
         rendered = render_markdown("# 标题\n\n> 引用内容\n\n---\n\n1. 第一项\n2. 第二项")

@@ -1011,6 +1011,10 @@ button:disabled,
 .batch-filter-form {
   margin: 0 0 12px;
 }
+.batch-summary-line,
+.batch-scope-hint {
+  margin: 0;
+}
 .batch-toggle-line {
   width: fit-content;
   padding: 6px 10px;
@@ -1018,6 +1022,39 @@ button:disabled,
   border: 1px solid var(--line);
   background: #ffffff;
   font-size: 0.8rem;
+}
+.batch-select-all-toggle {
+  width: fit-content;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.batch-select-all-toggle.active {
+  border-color: rgba(29, 78, 216, 0.28);
+  background: rgba(29, 78, 216, 0.08);
+  color: var(--brand);
+}
+.batch-select-all-toggle input {
+  width: auto;
+  margin: 0;
+}
+.batch-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.batch-pagination-status {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+.button-link.disabled {
+  pointer-events: none;
+  opacity: 0.5;
 }
 
 @media (max-width: 1300px) {

@@ -1,26 +1,41 @@
 <div class="lazy-panel-body">
-  <form class="batch-filter-form" action="{{ url_for('index') }}" method="get">
+  <form
+    class="batch-filter-form"
+    action="{{ url_for('tool_panel_route', panel_name='batch-run') }}"
+    method="get"
+    data-panel-form
+  >
     <input type="hidden" name="folder" value="{{ current_folder }}">
     <input type="hidden" name="q" value="{{ query }}">
     <input type="hidden" name="sort" value="{{ sort_by }}">
     <input type="hidden" name="show_done" value="{{ '1' if show_done else '' }}">
     <input type="hidden" name="paper" value="{{ selected_paper.rel_path if selected_paper else '' }}">
     <input type="hidden" name="tab" value="{{ selected_tab }}">
+    <input type="hidden" name="batch_page" value="1">
     <label class="checkbox-line batch-toggle-line">
-      <input type="checkbox" name="batch_show_done" value="1" {% if batch_show_done %}checked{% endif %} onchange="this.form.submit()">
+      <input type="checkbox" name="batch_show_done" value="1" {% if batch_show_done %}checked{% endif %} onchange="this.form.requestSubmit()">
       批量列表包含 DONE 文件夹里的论文
     </label>
   </form>
 
-  {% if filtered_papers %}
+  {% if batch_pagination.total %}
     <form class="batch-form" action="{{ url_for('prompt_batch_run_route') }}" method="post">
       <input type="hidden" name="folder" value="{{ current_folder }}">
       <input type="hidden" name="q" value="{{ query }}">
       <input type="hidden" name="sort" value="{{ sort_by }}">
       <input type="hidden" name="show_done" value="{{ '1' if show_done else '' }}">
       <input type="hidden" name="batch_show_done" value="{{ '1' if batch_show_done else '' }}">
+      <input type="hidden" name="batch_page" value="{{ batch_pagination.page }}">
       <input type="hidden" name="paper" value="{{ selected_paper.rel_path if selected_paper else '' }}">
       <input type="hidden" name="tab" value="{{ selected_tab }}">
+
+      <div class="tool-hint batch-summary-line">
+        当前显示第 {{ batch_pagination.start_index }}-{{ batch_pagination.end_index }} 篇，共 {{ batch_pagination.total }} 篇
+        {% if batch_pagination.total_pages > 1 %}
+          · 第 {{ batch_pagination.page }}/{{ batch_pagination.total_pages }} 页
+        {% endif %}
+      </div>
+      <div class="tool-hint batch-scope-hint" data-batch-scope-hint>默认只提交当前勾选的论文；也可以切换到“全选全部匹配结果”的状态。</div>
 
       <div class="batch-grid">
         <section class="batch-column">
@@ -54,8 +69,12 @@
               <span>当前按照上方筛选条件展示</span>
             </div>
             <div class="batch-head-actions">
-              <button type="button" class="ghost mini-action" data-check-action="all" data-check-group="paper">全选</button>
-              <button type="button" class="ghost mini-action" data-check-action="none" data-check-group="paper">清空</button>
+              <label class="checkbox-line batch-select-all-toggle" data-batch-select-all-toggle>
+                <input type="checkbox" name="select_all_filtered" value="1" data-batch-select-all>
+                全选全部匹配结果（当前 {{ batch_pagination.total }} / 全库 {{ batch_library_total }} 篇）
+              </label>
+              <button type="button" class="ghost mini-action" data-check-action="all" data-check-group="paper">勾选本页</button>
+              <button type="button" class="ghost mini-action" data-check-action="none" data-check-group="paper">清空本页</button>
             </div>
           </div>
           <div class="checklist-box tall">
@@ -69,6 +88,36 @@
               </label>
             {% endfor %}
           </div>
+
+          {% if batch_pagination.total_pages > 1 %}
+            <div class="batch-pagination">
+              {% if batch_pagination.has_prev %}
+                <a
+                  href="{{ url_for('tool_panel_route', panel_name='batch-run', folder=current_folder, q=query, sort=sort_by, paper=selected_paper.rel_path if selected_paper else None, tab=selected_tab, show_done='1' if show_done else None, batch_show_done='1' if batch_show_done else None, batch_page=batch_pagination.prev_page) }}"
+                  class="button-link secondary"
+                  data-panel-link
+                >
+                  上一页
+                </a>
+              {% else %}
+                <span class="button-link secondary disabled">上一页</span>
+              {% endif %}
+
+              <span class="batch-pagination-status">第 {{ batch_pagination.page }}/{{ batch_pagination.total_pages }} 页</span>
+
+              {% if batch_pagination.has_next %}
+                <a
+                  href="{{ url_for('tool_panel_route', panel_name='batch-run', folder=current_folder, q=query, sort=sort_by, paper=selected_paper.rel_path if selected_paper else None, tab=selected_tab, show_done='1' if show_done else None, batch_show_done='1' if batch_show_done else None, batch_page=batch_pagination.next_page) }}"
+                  class="button-link secondary"
+                  data-panel-link
+                >
+                  下一页
+                </a>
+              {% else %}
+                <span class="button-link secondary disabled">下一页</span>
+              {% endif %}
+            </div>
+          {% endif %}
         </section>
       </div>
 

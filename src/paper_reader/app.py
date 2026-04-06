@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -27,10 +28,12 @@ from .settings import SettingsStore
 from .task_queue import PaperJobQueue
 
 CACHE_FILE_NAME = ".paper_reader_index.json"
+DONE_INDEX_FILE_NAME = ".paper_reader_done_index.json"
 SUMMARY_DIR_NAME = ".paper-reader-ai"
 DONE_DIR_NAME = "DONE"
-LOGIN_USERNAME = "admin"
-LOGIN_PASSWORD = "paperpaperreaderreader12678"
+DEFAULT_BATCH_PANEL_PAGE_SIZE = 50
+DEFAULT_LOGIN_USERNAME = "admin"
+DEFAULT_LOGIN_PASSWORD = "paperpaperreaderreader12678"
 MAX_LOGIN_FAILURES = 3
 LOGIN_LOCK_SECONDS = 5 * 60
 
@@ -130,60 +133,44 @@ class PaperLibrary:
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.cache_path = self.root / CACHE_FILE_NAME
+        self.done_index_path = self.root / DONE_INDEX_FILE_NAME
         self.summary_root = self.root / SUMMARY_DIR_NAME
         self.summary_root.mkdir(parents=True, exist_ok=True)
         self.prompt_store = prompt_store
         self._hash_cache: dict[str, tuple[float, int, str]] = {}
         self._scan_lock = threading.RLock()
-        self._scan_cache: ScanResult | None = None
+        self._scan_cache: dict[tuple[bool, bool], ScanResult] = {}
 
     def invalidate_scan_cache(self) -> None:
         with self._scan_lock:
-            self._scan_cache = None
+            self._scan_cache.clear()
 
-    def scan(self, *, force: bool = False, lightweight: bool = False) -> ScanResult:
+    def scan(self, *, force: bool = False, lightweight: bool = False, include_done: bool = False) -> ScanResult:
         with self._scan_lock:
-            if self._scan_cache is not None and not force:
-                return self._scan_cache
+            cache_key = (lightweight, include_done)
+            if cache_key in self._scan_cache and not force:
+                return self._scan_cache[cache_key]
 
-            cache = self._load_cache()
-            next_cache: dict[str, Any] = {}
-            papers: list[PaperRecord] = []
-            folders = {""}
             active_prompt_slugs = [prompt.slug for prompt in self.prompt_store.active_prompts()]
+            if force or not self.cache_path.exists():
+                papers = self.rebuild_active_index(lightweight=lightweight)
+            else:
+                papers = self.load_active_index(active_prompt_slugs)
 
-            for path in self.iter_documents():
-                rel_path = path.relative_to(self.root).as_posix()
-                folder = path.relative_to(self.root).parent.as_posix()
-                if folder == ".":
-                    folder = ""
-                folders.add(folder)
+            folders = {""}
+            for paper in papers:
+                folders.add(paper.folder)
 
-                stat = path.stat()
-                prompt_state = self._prompt_state(rel_path, active_prompt_slugs)
-                signature = {
-                    "mtime": stat.st_mtime,
-                    "size": stat.st_size,
-                    "prompt_state": prompt_state,
-                    "active_prompts": active_prompt_slugs,
-                }
-                cached = cache.get(rel_path)
-                if cached and cached.get("signature") == signature:
-                    try:
-                        record = PaperRecord(**cached["record"])
-                    except TypeError:
-                        record = self._build_record(path, active_prompt_slugs, lightweight=lightweight)
-                else:
-                    record = self._build_record(path, active_prompt_slugs, lightweight=lightweight)
-                papers.append(record)
-                next_cache[rel_path] = {"signature": signature, "record": asdict(record)}
+            if include_done:
+                papers.extend(self.load_done_index(active_prompt_slugs))
+                for paper in papers:
+                    folders.add(paper.folder)
 
             result = ScanResult(papers=papers, folders=sorted(folders))
-            self.cache_path.write_text(json.dumps(next_cache, ensure_ascii=False, indent=2), encoding="utf-8")
-            self._scan_cache = result
+            self._scan_cache[cache_key] = result
             return result
 
-    def iter_documents(self) -> list[Path]:
+    def iter_documents(self, *, include_done: bool = False) -> list[Path]:
         documents: list[Path] = []
         for path in sorted(self.root.rglob("*")):
             if not path.is_file() or path.name == CACHE_FILE_NAME:
@@ -191,6 +178,22 @@ class PaperLibrary:
             if path.name == self.prompt_store.store_path.name:
                 continue
             if SUMMARY_DIR_NAME in path.parts:
+                continue
+            if not include_done and DONE_DIR_NAME in path.parts:
+                continue
+            if path.suffix.lower() not in ALLOWED_EXTENSIONS:
+                continue
+            documents.append(path)
+        return documents
+
+    def iter_done_documents(self) -> list[Path]:
+        done_root = self.root / DONE_DIR_NAME
+        if not done_root.exists():
+            return []
+
+        documents: list[Path] = []
+        for path in sorted(done_root.rglob("*")):
+            if not path.is_file():
                 continue
             if path.suffix.lower() not in ALLOWED_EXTENSIONS:
                 continue
@@ -201,9 +204,190 @@ class PaperLibrary:
         if not self.cache_path.exists():
             return {}
         try:
-            return json.loads(self.cache_path.read_text(encoding="utf-8"))
+            payload = json.loads(self.cache_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _record_from_index_item(self, item: dict[str, Any], active_prompt_slugs: list[str]) -> PaperRecord | None:
+        try:
+            record = PaperRecord(**item)
+        except TypeError:
+            return None
+
+        visible_slugs = set(active_prompt_slugs)
+        stored_slugs = [slug for slug in record.prompt_result_slugs if isinstance(slug, str)]
+        active_result_slugs = [slug for slug in stored_slugs if slug in visible_slugs]
+        return PaperRecord(
+            rel_path=record.rel_path,
+            file_name=record.file_name,
+            folder=record.folder,
+            extension=record.extension,
+            title=record.title,
+            display_title=record.display_title,
+            preview_text=record.preview_text,
+            extracted_date=record.extracted_date,
+            date_precision=record.date_precision,
+            date_source=record.date_source,
+            sort_date=record.sort_date,
+            file_size=record.file_size,
+            modified_at=record.modified_at,
+            preview_kind=record.preview_kind,
+            prompt_result_count=len(active_result_slugs),
+            prompt_result_slugs=stored_slugs,
+            is_done=record.is_done,
+        )
+
+    def _load_active_index_payload(self) -> dict[str, Any]:
+        payload = self._load_cache()
+        if "records" in payload and isinstance(payload.get("records"), list):
+            return payload
+
+        # Backward compatibility for the old rel_path -> {signature, record} cache format.
+        records: list[dict[str, Any]] = []
+        for item in payload.values():
+            if isinstance(item, dict) and isinstance(item.get("record"), dict):
+                records.append(item["record"])
+        if not records:
+            return {}
+        return {"records": records}
+
+    def _write_active_index_payload(self, payload: dict[str, Any]) -> None:
+        self.cache_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+            errors="backslashreplace",
+        )
+
+    def load_active_index(self, active_prompt_slugs: list[str]) -> list[PaperRecord]:
+        payload = self._load_active_index_payload()
+        records: list[PaperRecord] = []
+        for item in payload.get("records", []):
+            if not isinstance(item, dict):
+                continue
+            record = self._record_from_index_item(item, active_prompt_slugs)
+            if record is None or record.is_done:
+                continue
+            records.append(record)
+        return records
+
+    def rebuild_active_index(self, *, lightweight: bool = False) -> list[PaperRecord]:
+        active_prompt_slugs = [prompt.slug for prompt in self.prompt_store.active_prompts()]
+        records = [
+            self._build_record(path, active_prompt_slugs, lightweight=lightweight)
+            for path in self.iter_documents(include_done=False)
+        ]
+        self._write_active_index_payload(
+            {
+                "updated_at": datetime.utcnow().isoformat(timespec="seconds"),
+                "record_count": len(records),
+                "records": [asdict(record) for record in records],
+            }
+        )
+        self.invalidate_scan_cache()
+        return records
+
+    def _update_active_index_entry(self, rel_path: str, *, lightweight: bool = False) -> None:
+        payload = self._load_active_index_payload()
+        if not payload.get("records") and not self.cache_path.exists():
+            active_prompt_slugs = [prompt.slug for prompt in self.prompt_store.active_prompts()]
+            payload = {
+                "records": [
+                    asdict(self._build_record(path, active_prompt_slugs, lightweight=lightweight))
+                    for path in self.iter_documents(include_done=False)
+                ]
+            }
+        items = [item for item in payload.get("records", []) if isinstance(item, dict) and item.get("rel_path") != rel_path]
+        if rel_path and not self.is_done_rel_path(rel_path):
+            try:
+                absolute = self.resolve_relative_path(rel_path)
+            except ValueError:
+                absolute = None
+            if absolute is not None and absolute.exists() and absolute.is_file():
+                active_prompt_slugs = [prompt.slug for prompt in self.prompt_store.active_prompts()]
+                items.append(asdict(self._build_record(absolute, active_prompt_slugs, lightweight=lightweight)))
+        self._write_active_index_payload(
+            {
+                "updated_at": datetime.utcnow().isoformat(timespec="seconds"),
+                "record_count": len(items),
+                "records": items,
+            }
+        )
+        self.invalidate_scan_cache()
+
+    def _load_done_index_payload(self) -> dict[str, Any]:
+        if not self.done_index_path.exists():
+            return {}
+        try:
+            payload = json.loads(self.done_index_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _write_done_index_payload(self, payload: dict[str, Any]) -> None:
+        self.done_index_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+            errors="backslashreplace",
+        )
+
+    def load_done_index(self, active_prompt_slugs: list[str]) -> list[PaperRecord]:
+        payload = self._load_done_index_payload()
+        records: list[PaperRecord] = []
+        for item in payload.get("records", []):
+            if not isinstance(item, dict):
+                continue
+            record = self._record_from_index_item(item, active_prompt_slugs)
+            if record is None:
+                continue
+            if not self.is_done_rel_path(record.rel_path):
+                continue
+            records.append(record)
+        return records
+
+    def rebuild_done_index(self, *, lightweight: bool = True) -> list[PaperRecord]:
+        active_prompt_slugs = [prompt.slug for prompt in self.prompt_store.active_prompts()]
+        records = [
+            self._build_record(path, active_prompt_slugs, lightweight=lightweight)
+            for path in self.iter_done_documents()
+        ]
+        self._write_done_index_payload(
+            {
+                "updated_at": datetime.utcnow().isoformat(timespec="seconds"),
+                "record_count": len(records),
+                "records": [asdict(record) for record in records],
+            }
+        )
+        self.invalidate_scan_cache()
+        return records
+
+    def _update_done_index_entry(self, rel_path: str, *, lightweight: bool = False) -> None:
+        payload = self._load_done_index_payload()
+        if not payload.get("records") and not self.done_index_path.exists():
+            active_prompt_slugs = [prompt.slug for prompt in self.prompt_store.active_prompts()]
+            payload = {
+                "records": [
+                    asdict(self._build_record(path, active_prompt_slugs, lightweight=lightweight))
+                    for path in self.iter_done_documents()
+                ]
+            }
+        items = [item for item in payload.get("records", []) if isinstance(item, dict) and item.get("rel_path") != rel_path]
+        if self.is_done_rel_path(rel_path):
+            try:
+                absolute = self.resolve_relative_path(rel_path)
+            except ValueError:
+                absolute = None
+            if absolute is not None and absolute.exists() and absolute.is_file():
+                active_prompt_slugs = [prompt.slug for prompt in self.prompt_store.active_prompts()]
+                items.append(asdict(self._build_record(absolute, active_prompt_slugs, lightweight=lightweight)))
+        self._write_done_index_payload(
+            {
+                "updated_at": datetime.utcnow().isoformat(timespec="seconds"),
+                "record_count": len(items),
+                "records": items,
+            }
+        )
+        self.invalidate_scan_cache()
 
     def _build_record(self, path: Path, active_prompt_slugs: list[str], *, lightweight: bool = False) -> PaperRecord:
         rel_path = path.relative_to(self.root).as_posix()
@@ -219,16 +403,17 @@ class PaperLibrary:
             except Exception:
                 meta = {"title": path.stem, "preview_text": "", "full_text": ""}
 
-        title = meta.get("title") or path.stem
-        preview_text = meta.get("preview_text") or ""
+        title = self._safe_text(meta.get("title") or path.stem)
+        preview_text = self._safe_text(meta.get("preview_text") or "")
         date_info = self._extract_date(title, preview_text, path.name)
         modified = datetime.fromtimestamp(path.stat().st_mtime)
-        prompt_result_slugs = self.list_existing_prompt_slugs(rel_path, set(active_prompt_slugs))
+        all_prompt_result_slugs = self.list_existing_prompt_slugs(rel_path)
+        visible_prompt_result_slugs = [slug for slug in all_prompt_result_slugs if slug in set(active_prompt_slugs)]
 
         return PaperRecord(
-            rel_path=rel_path,
-            file_name=path.name,
-            folder=folder,
+            rel_path=self._safe_text(rel_path),
+            file_name=self._safe_text(path.name),
+            folder=self._safe_text(folder),
             extension=path.suffix.lower(),
             title=title,
             display_title=title if title else path.stem,
@@ -240,10 +425,15 @@ class PaperLibrary:
             file_size=path.stat().st_size,
             modified_at=modified.isoformat(timespec="seconds"),
             preview_kind=self.preview_kind(path),
-            prompt_result_count=len(prompt_result_slugs),
-            prompt_result_slugs=prompt_result_slugs,
+            prompt_result_count=len(visible_prompt_result_slugs),
+            prompt_result_slugs=all_prompt_result_slugs,
             is_done=self.is_done_rel_path(rel_path),
         )
+
+    def _safe_text(self, value: str) -> str:
+        if not value:
+            return ""
+        return value.encode("utf-8", "backslashreplace").decode("utf-8")
 
     def build_record_for_rel_path(self, rel_path: str, active_prompt_slugs: list[str]) -> PaperRecord:
         return self._build_record(self.resolve_relative_path(rel_path), active_prompt_slugs)
@@ -450,7 +640,12 @@ class PaperLibrary:
         new_rel_path = destination.relative_to(self.root).as_posix()
         self._move_prompt_results(old_rel_path, new_rel_path)
         self._hash_cache.pop(old_rel_path, None)
-        self.invalidate_scan_cache()
+        if self.is_done_rel_path(old_rel_path) or self.is_done_rel_path(new_rel_path):
+            self._update_done_index_entry(old_rel_path)
+            self._update_done_index_entry(new_rel_path)
+        else:
+            self._update_active_index_entry(old_rel_path)
+            self._update_active_index_entry(new_rel_path)
 
         return new_rel_path
 
@@ -468,7 +663,10 @@ class PaperLibrary:
         legacy_path = self.legacy_summary_path_for(rel_path)
         if legacy_path.exists():
             legacy_path.unlink()
-        self.invalidate_scan_cache()
+        if self.is_done_rel_path(rel_path):
+            self._update_done_index_entry(rel_path)
+        else:
+            self._update_active_index_entry(rel_path)
 
     def toggle_done(self, rel_path: str) -> str:
         source = self.resolve_relative_path(rel_path)
@@ -488,7 +686,10 @@ class PaperLibrary:
         cached = self._hash_cache.pop(old_rel_path, None)
         if cached:
             self._hash_cache[new_rel_path] = cached
-        self.invalidate_scan_cache()
+        self._update_active_index_entry(old_rel_path)
+        self._update_active_index_entry(new_rel_path)
+        self._update_done_index_entry(old_rel_path)
+        self._update_done_index_entry(new_rel_path)
         return new_rel_path
 
     def legacy_summary_path_for(self, rel_path: str) -> Path:
@@ -566,7 +767,10 @@ class PaperLibrary:
         legacy_path = self.legacy_summary_path_for(rel_path)
         if legacy_path.exists() and legacy_path != result_path:
             legacy_path.unlink()
-        self.invalidate_scan_cache()
+        if self.is_done_rel_path(rel_path):
+            self._update_done_index_entry(rel_path)
+        else:
+            self._update_active_index_entry(rel_path)
         return result_path
 
     def generate_prompt_result(
@@ -762,6 +966,90 @@ def filter_and_sort_papers(
     return filtered
 
 
+def parse_page(value: str | None, default: int = 1) -> int:
+    try:
+        page = int(value or default)
+    except (TypeError, ValueError):
+        return default
+    return max(1, page)
+
+
+def paginate_items(items: list[Any], page: int, page_size: int) -> dict[str, Any]:
+    total = len(items)
+    if total == 0:
+        return {
+            "items": [],
+            "page": 1,
+            "page_size": page_size,
+            "total": 0,
+            "total_pages": 1,
+            "has_prev": False,
+            "has_next": False,
+            "prev_page": 1,
+            "next_page": 1,
+            "start_index": 0,
+            "end_index": 0,
+        }
+
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    safe_page = min(max(1, page), total_pages)
+    start = (safe_page - 1) * page_size
+    end = start + page_size
+    return {
+        "items": items[start:end],
+        "page": safe_page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": total_pages,
+        "has_prev": safe_page > 1,
+        "has_next": safe_page < total_pages,
+        "prev_page": safe_page - 1 if safe_page > 1 else 1,
+        "next_page": safe_page + 1 if safe_page < total_pages else total_pages,
+        "start_index": start + 1,
+        "end_index": min(end, total),
+    }
+
+
+def load_env_file_values(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def resolve_login_credentials(base_dir: Path) -> tuple[str, str]:
+    env_file_path = Path(os.environ.get("PAPER_READER_ENV_FILE", str(base_dir / ".env")))
+    env_values = load_env_file_values(env_file_path)
+    username = (
+        env_values.get("PAPER_READER_LOGIN_USERNAME")
+        or os.environ.get("PAPER_READER_LOGIN_USERNAME")
+        or DEFAULT_LOGIN_USERNAME
+    )
+    password = (
+        env_values.get("PAPER_READER_LOGIN_PASSWORD")
+        or os.environ.get("PAPER_READER_LOGIN_PASSWORD")
+        or DEFAULT_LOGIN_PASSWORD
+    )
+    return username, password
+
+
 
 def redirect_to_index(
     current_folder: str,
@@ -789,6 +1077,7 @@ def redirect_to_index(
 def create_app(library_root: Path | None = None) -> Flask:
     base_dir = Path(__file__).resolve().parents[2]
     root = library_root or Path(base_dir / "docs" / "papers")
+    login_username, login_password = resolve_login_credentials(base_dir)
     app = Flask(
         __name__,
         template_folder=str(Path(__file__).with_name("templates")),
@@ -796,6 +1085,8 @@ def create_app(library_root: Path | None = None) -> Flask:
     )
     app.config["SECRET_KEY"] = "paper-reader-dev-secret"
     app.config["LIBRARY_ROOT"] = root.resolve()
+    app.config["LOGIN_USERNAME"] = login_username
+    app.config["LOGIN_PASSWORD"] = login_password
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.settings_store = SettingsStore(app.config["LIBRARY_ROOT"])  # type: ignore[attr-defined]
@@ -842,10 +1133,10 @@ def create_app(library_root: Path | None = None) -> Flask:
             else:
                 username = request.form.get("username", "").strip()
                 password = request.form.get("password", "")
-                if username == LOGIN_USERNAME and password == LOGIN_PASSWORD:
+                if username == app.config["LOGIN_USERNAME"] and password == app.config["LOGIN_PASSWORD"]:
                     app.login_guard.register_success(client_key)  # type: ignore[attr-defined]
                     session["authenticated"] = True
-                    session["username"] = LOGIN_USERNAME
+                    session["username"] = app.config["LOGIN_USERNAME"]
                     return redirect(next_url or url_for("index"))
 
                 failure = app.login_guard.register_failure(client_key)  # type: ignore[attr-defined]
@@ -941,7 +1232,10 @@ def create_app(library_root: Path | None = None) -> Flask:
             raise
 
         rel_path = destination.relative_to(app.config["LIBRARY_ROOT"]).as_posix()
-        app.library.invalidate_scan_cache()  # type: ignore[attr-defined]
+        if app.library.is_done_rel_path(rel_path):  # type: ignore[attr-defined]
+            app.library._update_done_index_entry(rel_path)  # type: ignore[attr-defined]
+        else:
+            app.library._update_active_index_entry(rel_path)  # type: ignore[attr-defined]
         active_prompts = app.prompt_store.active_prompts()  # type: ignore[attr-defined]
         paper = app.library.build_record_for_rel_path(rel_path, [prompt.slug for prompt in active_prompts])  # type: ignore[attr-defined]
         visible_in_current_view = bool(
@@ -993,18 +1287,42 @@ def create_app(library_root: Path | None = None) -> Flask:
         if result["invalid"]:
             flash(f"{result['invalid']} 个任务因 Prompt 缺失而未提交。", "error")
 
-    def current_page_state() -> dict[str, Any]:
-        scan = app.library.scan()  # type: ignore[attr-defined]
-        all_prompts = app.prompt_store.list_prompts()  # type: ignore[attr-defined]
-        active_prompts = [prompt for prompt in all_prompts if prompt.enabled]
+    def build_batch_papers(
+        *,
+        folder: str,
+        query: str,
+        sort_by: str,
+        show_done: bool,
+        batch_show_done: bool,
+        selected_rel_path: str = "",
+    ) -> list[PaperRecord]:
+        include_done = show_done or batch_show_done or selected_rel_path.startswith(f"{DONE_DIR_NAME}/")
+        scan = app.library.scan(include_done=include_done)  # type: ignore[attr-defined]
+        batch_papers = filter_and_sort_papers(
+            scan.papers,
+            folder=folder,
+            query=query,
+            sort_by=sort_by,
+            show_done=(show_done or batch_show_done),
+        )
+        if not batch_show_done:
+            batch_papers = [paper for paper in batch_papers if not paper.is_done]
+        return batch_papers
 
+    def current_page_state() -> dict[str, Any]:
         folder = request.args.get("folder", "")
         query = request.args.get("q", "")
         sort_by = request.args.get("sort", "date_desc")
         show_done = request.args.get("show_done", "").strip().lower() in {"1", "true", "yes", "on"}
         batch_show_done = request.args.get("batch_show_done", "").strip().lower() in {"1", "true", "yes", "on"}
+        batch_page = parse_page(request.args.get("batch_page"))
         selected_rel_path = request.args.get("paper", "").strip("/")
         selected_tab = request.args.get("tab", "source")
+
+        include_done = show_done or batch_show_done or selected_rel_path.startswith(f"{DONE_DIR_NAME}/")
+        scan = app.library.scan(include_done=include_done)  # type: ignore[attr-defined]
+        all_prompts = app.prompt_store.list_prompts()  # type: ignore[attr-defined]
+        active_prompts = [prompt for prompt in all_prompts if prompt.enabled]
 
         papers = filter_and_sort_papers(scan.papers, folder=folder, query=query, sort_by=sort_by, show_done=show_done)
         batch_papers = filter_and_sort_papers(
@@ -1016,6 +1334,15 @@ def create_app(library_root: Path | None = None) -> Flask:
         )
         if not batch_show_done:
             batch_papers = [paper for paper in batch_papers if not paper.is_done]
+        batch_library_papers = filter_and_sort_papers(
+            scan.papers,
+            folder="",
+            query="",
+            sort_by=sort_by,
+            show_done=(show_done or batch_show_done),
+        )
+        if not batch_show_done:
+            batch_library_papers = [paper for paper in batch_library_papers if not paper.is_done]
         sidebar_groups = build_sidebar_groups(papers, selected_rel_path)
 
         selected_paper = next((item for item in papers if item.rel_path == selected_rel_path), None)
@@ -1031,10 +1358,12 @@ def create_app(library_root: Path | None = None) -> Flask:
             "sort_by": sort_by,
             "show_done": show_done,
             "batch_show_done": batch_show_done,
+            "batch_page": batch_page,
             "selected_rel_path": selected_rel_path,
             "selected_tab": selected_tab,
             "papers": papers,
             "batch_papers": batch_papers,
+            "batch_library_total": len(batch_library_papers),
             "sidebar_groups": sidebar_groups,
             "selected_paper": selected_paper,
         }
@@ -1126,6 +1455,7 @@ def create_app(library_root: Path | None = None) -> Flask:
             "sort_by": state["sort_by"],
             "show_done": state["show_done"],
             "batch_show_done": state["batch_show_done"],
+            "batch_page": state["batch_page"],
             "selected_paper": state["selected_paper"],
             "selected_tab": state["selected_tab"],
             "active_prompt_count": len(state["active_prompts"]),
@@ -1154,10 +1484,13 @@ def create_app(library_root: Path | None = None) -> Flask:
             )
 
         if panel_name == "batch-run":
+            pagination = paginate_items(state["batch_papers"], state["batch_page"], DEFAULT_BATCH_PANEL_PAGE_SIZE)
             return render_template(
                 "panels/batch_run.html",
                 **context,
-                filtered_papers=state["batch_papers"],
+                filtered_papers=pagination["items"],
+                batch_pagination=pagination,
+                batch_library_total=state["batch_library_total"],
                 all_prompts=state["all_prompts"],
             )
 
@@ -1405,29 +1738,72 @@ def create_app(library_root: Path | None = None) -> Flask:
         sort_by = request.form.get("sort", "date_desc")
         show_done = parse_checkbox(request.form.get("show_done"))
         batch_show_done = parse_checkbox(request.form.get("batch_show_done"))
+        batch_page = parse_page(request.form.get("batch_page"))
         selected_paper = request.form.get("paper", "") or None
         tab = request.form.get("tab", "source")
         rel_paths = request.form.getlist("rel_paths")
         prompt_slugs = request.form.getlist("prompt_slugs")
+        select_all_filtered = parse_checkbox(request.form.get("select_all_filtered"))
         force = parse_checkbox(request.form.get("force"))
+
+        if select_all_filtered:
+            rel_paths = [
+                paper.rel_path
+                for paper in build_batch_papers(
+                    folder=current_folder,
+                    query=query,
+                    sort_by=sort_by,
+                    show_done=show_done,
+                    batch_show_done=batch_show_done,
+                    selected_rel_path=(selected_paper or ""),
+                )
+            ]
 
         if not rel_paths:
             flash("请至少选择一篇论文。", "error")
-            return redirect_to_index(current_folder, query, sort_by, selected_paper, tab, show_done=show_done, batch_show_done=batch_show_done)
+            return redirect(
+                url_for(
+                    "index",
+                    folder=current_folder,
+                    q=query,
+                    sort=sort_by,
+                    paper=selected_paper,
+                    tab=tab,
+                    show_done="1" if show_done else None,
+                    batch_show_done="1" if batch_show_done else None,
+                    batch_page=batch_page,
+                )
+            )
         if not prompt_slugs:
             flash("请至少选择一个 Prompt。", "error")
-            return redirect_to_index(current_folder, query, sort_by, selected_paper, tab, show_done=show_done, batch_show_done=batch_show_done)
+            return redirect(
+                url_for(
+                    "index",
+                    folder=current_folder,
+                    q=query,
+                    sort=sort_by,
+                    paper=selected_paper,
+                    tab=tab,
+                    show_done="1" if show_done else None,
+                    batch_show_done="1" if batch_show_done else None,
+                    batch_page=batch_page,
+                )
+            )
 
         submission = app.job_queue.submit(rel_paths, prompt_slugs, force=force, source="batch")  # type: ignore[attr-defined]
         flash_submission_summary(submission, action_label="批量后台任务已提交")
-        return redirect_to_index(
-            current_folder,
-            query,
-            sort_by,
-            selected_paper or (rel_paths[0] if rel_paths else None),
-            tab,
-            show_done=show_done,
-            batch_show_done=batch_show_done,
+        return redirect(
+            url_for(
+                "index",
+                folder=current_folder,
+                q=query,
+                sort=sort_by,
+                paper=(selected_paper or (rel_paths[0] if rel_paths else None)),
+                tab=tab,
+                show_done="1" if show_done else None,
+                batch_show_done="1" if batch_show_done else None,
+                batch_page=batch_page,
+            )
         )
 
     @app.post("/offline-package")
@@ -1568,8 +1944,12 @@ def create_app(library_root: Path | None = None) -> Flask:
         show_done = parse_checkbox(request.form.get("show_done"))
         selected_paper = request.form.get("paper", "") or None
         tab = request.form.get("tab", "source")
-        app.library.scan(force=True, lightweight=True)  # type: ignore[attr-defined]
-        flash("已完成文件夹快速扫描：目录已更新，未触发 Prompt，也未执行重型解析。", "success")
+        active_records = app.library.rebuild_active_index(lightweight=True)  # type: ignore[attr-defined]
+        done_records = app.library.rebuild_done_index(lightweight=True)  # type: ignore[attr-defined]
+        flash(
+            f"已完成文件夹快速扫描：普通目录已更新（{len(active_records)} 篇），DONE 轻量索引已刷新（{len(done_records)} 篇），未触发 Prompt，也未执行重型解析。",
+            "success",
+        )
         return redirect_to_index(current_folder, query, sort_by, selected_paper, tab, show_done=show_done)
 
     return app
