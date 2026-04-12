@@ -1,6 +1,6 @@
 # paper-reader
 
-一个面向本地论文库的轻量阅读器，支持 PDF / Word 文档管理、浏览器内阅读、Prompt 批量分析、离线阅读包导出，以及后台任务处理。
+一个面向本地论文库的轻量阅读器，支持 PDF / Word 文档管理、浏览器内阅读、Prompt 批量分析、离线阅读包导出、外部论文来源归档，以及后台任务处理。
 
 ## 主要功能
 
@@ -11,6 +11,7 @@
 - 后台任务队列：自动处理新论文，也可批量补跑历史论文
 - 离线阅读包：导出原论文 + Markdown + 本地 HTML 阅读器
 - DONE 流程：已读论文可移入 `DONE/`
+- Sources 页面：浏览外部抓取的论文归档，支持按天打包下载或一键导入主阅读器
 - 登录保护：进入阅读器前需要用户名和密码
 
 ## 默认配置
@@ -120,6 +121,7 @@ tmux kill-session -t paper-reader
 ```text
 paper-reader/
 ├── run.py
+├── paper-reader-source/        # 外部来源抓取子项目
 ├── requirements.txt
 ├── src/paper_reader/
 │   ├── app.py
@@ -127,6 +129,7 @@ paper-reader/
 │   ├── ai_summary.py
 │   ├── prompt_manager.py
 │   ├── offline_package.py
+│   ├── source_archive.py
 │   ├── static/
 │   └── templates/
 ├── tests/
@@ -156,6 +159,74 @@ paper-reader/
 - `批量列表包含 DONE 文件夹里的论文`
 
 这样就会把 `DONE/` 下符合当前筛选条件的论文也一起显示出来。
+
+## Sources 页面
+
+系统现在支持一个独立的 `Sources` 页面，用来浏览外部归档的论文来源数据。
+
+当前已接入：
+
+- Hugging Face Daily Papers
+
+在主阅读器底部工具区可以进入 `Sources` 页面。这个页面支持：
+
+- 按年 / 月 / 日浏览抓取归档
+- 查看每天保存下来的论文列表
+- 打包下载某一天选中的 PDF
+- 把选中的论文直接导入主阅读器
+
+导入后的目标目录默认是：
+
+- `Sources/HuggingFace/YYYY/MM/DD/`
+
+如果阅读器里启用了自动 Prompt，那么从 `Sources` 导入的论文也会自动进入后台任务队列。
+
+### Sources 数据目录
+
+默认会从下面这个目录读取外部归档数据：
+
+- `paper-reader-source/data/huggingface_daily/`
+
+这个目录里的数据不会提交到 GitHub。
+
+### Hugging Face 抓取子项目
+
+仓库里包含一个单独的子项目：
+
+- `paper-reader-source/`
+
+它负责：
+
+- 抓取 Hugging Face Daily Papers
+- 按天保存 manifest
+- 下载对应 PDF 到本地归档目录
+
+直接运行一次采集：
+
+```bash
+PYTHONPATH=paper-reader-source python3 -m paper_reader_source.service \
+  --data-dir paper-reader-source/data/huggingface_daily \
+  --run-on-start --once
+```
+
+长期运行定时服务：
+
+```bash
+PYTHONPATH=paper-reader-source python3 -m paper_reader_source.service \
+  --data-dir paper-reader-source/data/huggingface_daily
+```
+
+或者直接用仓库里自带的脚本：
+
+```bash
+paper-reader-source/scripts/run_huggingface_daily_service.sh
+```
+
+当前调度规则：
+
+- 时区：`Asia/Shanghai`
+- 每天执行时间：`18:30`
+- 默认保留 `upvotes >= 5` 的论文
 
 ## 手动扫描 Paper 文件夹
 
