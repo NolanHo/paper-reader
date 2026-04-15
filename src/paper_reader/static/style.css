@@ -175,7 +175,8 @@ main {
 
 .insights-shell {
   display: grid;
-  gap: 14px;
+  gap: 10px;
+  font-size: 0.88rem;
 }
 
 .insights-head,
@@ -185,41 +186,47 @@ main {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
+  gap: 10px;
 }
 
 .insights-head-actions {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
+}
+
+.insights-shell button,
+.insights-shell .button-link {
+  padding: 8px 10px;
+  font-size: 0.82rem;
 }
 
 .insights-head,
 .insights-theme-card,
 .insights-status-card,
 .insights-empty-card {
-  padding: 18px;
+  padding: 14px;
 }
 
 .insights-status-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 10px;
 }
 
 .insights-status-card {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .insights-progress-shell {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .insights-progress-bar {
   width: 100%;
-  height: 12px;
+  height: 10px;
   border-radius: 999px;
   background: rgba(15, 23, 42, 0.08);
   overflow: hidden;
@@ -245,7 +252,7 @@ main {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -256,12 +263,13 @@ main {
 
 .insights-progress-primary {
   font-weight: 700;
-  font-size: 0.96rem;
+  font-size: 0.84rem;
 }
 
 .insights-progress-secondary {
   color: var(--muted);
-  line-height: 1.5;
+  line-height: 1.4;
+  font-size: 0.78rem;
 }
 
 .insights-status-card strong,
@@ -277,7 +285,7 @@ main {
 .insights-milestone-body p,
 .insights-status-meta {
   margin: 0;
-  line-height: 1.65;
+  line-height: 1.5;
 }
 
 .insights-status-meta,
@@ -291,11 +299,11 @@ main {
 
 .insights-theme-grid {
   display: grid;
-  gap: 18px;
+  gap: 12px;
 }
 
 .insights-module-shell {
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 .insights-momentum-head {
@@ -312,8 +320,8 @@ main {
 
 .insights-theme-card {
   display: grid;
-  gap: 16px;
-  border-radius: 22px;
+  gap: 12px;
+  border-radius: 18px;
   background:
     radial-gradient(circle at top right, rgba(29, 78, 216, 0.09), transparent 28%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 252, 255, 0.98));
@@ -321,18 +329,18 @@ main {
 
 .insights-theme-head {
   border-bottom: 1px solid var(--line);
-  padding-bottom: 12px;
+  padding-bottom: 8px;
 }
 
 .insights-theme-head h3 {
-  margin: 2px 0 6px;
-  font-size: 1.32rem;
+  margin: 0 0 4px;
+  font-size: 1.08rem;
 }
 
 .insights-theme-metrics {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   justify-content: flex-end;
 }
 
@@ -341,58 +349,59 @@ main {
 .insights-year-bar strong {
   display: inline-flex;
   align-items: center;
-  padding: 5px 10px;
+  padding: 4px 8px;
   border-radius: 999px;
   background: rgba(29, 78, 216, 0.08);
   border: 1px solid rgba(29, 78, 216, 0.12);
-  font-size: 0.74rem;
+  font-size: 0.68rem;
 }
 
 .insights-story-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.9fr);
-  gap: 14px;
+  gap: 10px;
 }
 
 .insights-panel {
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.82);
-  padding: 16px;
+  padding: 12px;
   display: grid;
-  gap: 12px;
+  gap: 8px;
+  min-width: 0;
 }
 
 .insights-panel h4 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.88rem;
 }
 
 .insights-chip-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .insights-year-bars {
   display: flex;
   align-items: end;
-  gap: 10px;
-  min-height: 180px;
-  padding-top: 8px;
+  gap: 8px;
+  min-height: 150px;
+  padding-top: 4px;
   overflow-x: auto;
 }
 
 .insights-year-bar {
-  min-width: 58px;
+  min-width: 48px;
   display: grid;
-  gap: 6px;
+  gap: 4px;
   justify-items: center;
   align-content: end;
 }
 
 .insights-year-label {
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   color: var(--muted);
 }
 
@@ -407,66 +416,75 @@ main {
 
 .insights-phase-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+  min-width: 0;
 }
 
 .insights-phase-card {
-  border-radius: 16px;
+  border-radius: 13px;
   background: linear-gradient(180deg, rgba(219, 234, 254, 0.8), rgba(255, 255, 255, 0.9));
   border: 1px solid rgba(29, 78, 216, 0.14);
-  padding: 14px;
+  padding: 10px;
   display: grid;
-  gap: 10px;
+  gap: 7px;
+  min-width: 0;
 }
 
 .insights-phase-card h5,
 .insights-milestone-body h5 {
   margin: 0;
-  font-size: 0.98rem;
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
 }
 
 .insights-phase-label {
   margin: 0;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  font-size: 0.66rem;
+  font-size: 0.58rem;
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .insights-phase-shift {
   font-weight: 600;
+  font-size: 0.8rem;
+}
+
+.insights-phase-card p {
+  overflow-wrap: anywhere;
 }
 
 .insights-paper-mini-list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .momentum-window-grid {
   display: grid;
-  gap: 18px;
+  gap: 12px;
 }
 
 .momentum-window-card {
   display: grid;
-  gap: 16px;
-  border-radius: 22px;
+  gap: 12px;
+  border-radius: 18px;
   background:
     radial-gradient(circle at top left, rgba(16, 185, 129, 0.09), transparent 28%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(244, 255, 250, 0.98));
-  padding: 18px;
+  padding: 14px;
 }
 
 .momentum-window-head {
   border-bottom: 1px solid var(--line);
-  padding-bottom: 12px;
+  padding-bottom: 8px;
 }
 
 .momentum-list-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 10px;
 }
 
 .momentum-panel {
@@ -475,14 +493,14 @@ main {
 
 .momentum-signal-list {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .momentum-signal-item {
   display: grid;
-  gap: 10px;
-  padding: 14px;
-  border-radius: 16px;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 13px;
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(15, 118, 110, 0.12);
 }
@@ -491,39 +509,39 @@ main {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .momentum-signal-meta {
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: 0.68rem;
 }
 
 .opportunity-section-grid {
   display: grid;
-  gap: 18px;
+  gap: 12px;
 }
 
 .opportunity-section-card {
   display: grid;
-  gap: 16px;
-  border-radius: 22px;
+  gap: 12px;
+  border-radius: 18px;
   background:
     radial-gradient(circle at top left, rgba(245, 158, 11, 0.08), transparent 30%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 252, 245, 0.98));
-  padding: 18px;
+  padding: 14px;
 }
 
 .opportunity-section-head {
   border-bottom: 1px solid var(--line);
-  padding-bottom: 12px;
+  padding-bottom: 8px;
 }
 
 .opportunity-item-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 10px;
 }
 
 .opportunity-item-card,
@@ -535,7 +553,7 @@ main {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -548,22 +566,32 @@ main {
   gap: 4px;
   text-decoration: none;
   color: inherit;
-  padding: 10px;
-  border-radius: 12px;
+  padding: 8px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(29, 78, 216, 0.1);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .insights-paper-mini span {
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: 0.64rem;
+  overflow-wrap: anywhere;
+}
+
+.insights-paper-mini strong {
+  min-width: 0;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .insights-timeline {
   position: relative;
   display: grid;
-  gap: 14px;
-  padding-left: 18px;
+  gap: 10px;
+  padding-left: 16px;
 }
 
 .insights-timeline::before {
@@ -580,7 +608,7 @@ main {
   position: relative;
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
-  gap: 12px;
+  gap: 10px;
 }
 
 .insights-milestone-dot {
@@ -610,9 +638,9 @@ main {
 
 .insights-milestone-body {
   display: grid;
-  gap: 8px;
-  padding: 14px;
-  border-radius: 16px;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 13px;
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid var(--line);
 }
