@@ -30,8 +30,8 @@
 
 ### 默认登录信息
 
-- 用户名：`admin`
-- 密码：`paperpaperreaderreader12678`
+- 用户名：`nolan`
+- 密码：`kujyoai`
 
 安全限制：
 
@@ -49,7 +49,7 @@
 示例：
 
 ```dotenv
-PAPER_READER_LOGIN_USERNAME=admin
+PAPER_READER_LOGIN_USERNAME=nolan
 PAPER_READER_LOGIN_PASSWORD=replace-with-your-own-password
 ```
 
@@ -87,7 +87,7 @@ python3 -m venv .venv
 
 ```bash
 cat > .env <<'EOF'
-PAPER_READER_LOGIN_USERNAME=admin
+PAPER_READER_LOGIN_USERNAME=nolan
 PAPER_READER_LOGIN_PASSWORD=replace-with-your-own-password
 EOF
 ```

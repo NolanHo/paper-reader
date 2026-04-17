@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
-import time
+import os
+import pwd
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -67,6 +69,35 @@ def _progress_from_event(line_index: int, payload: dict[str, object] | None) -> 
     return progress, text[:220]
 
 
+def _child_env() -> dict[str, str]:
+    child_env = os.environ.copy()
+    child_env.pop("NPM_CONFIG_PREFIX", None)
+    child_env.pop("npm_config_prefix", None)
+    child_env["HOME"] = pwd.getpwuid(os.getuid()).pw_dir
+    child_env.pop("ZDOTDIR", None)
+    return child_env
+
+
+def _build_codex_command(*, workdir: Path, model: str, output_path: Path) -> list[str]:
+    if shutil.which("codex") is None:
+        raise RuntimeError("`codex` command is not available in PATH.")
+    return [
+        "codex",
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--cd",
+        str(workdir.resolve()),
+        "--model",
+        model or DEFAULT_MODEL,
+        "--output-last-message",
+        str(output_path),
+        "-",
+    ]
+
+
+
 def _run_codex_prompt(
     prompt_text: str,
     *,
@@ -76,11 +107,8 @@ def _run_codex_prompt(
     should_abort: AbortCallback | None = None,
     process_callback: ProcessCallback | None = None,
 ) -> str:
-    if shutil.which("codex") is None:
-        raise RuntimeError("`codex` command is not available in PATH.")
-
     if progress_callback:
-        progress_callback(5, "正在启动 Codex YOLO 后台任务。")
+        progress_callback(5, "正在启动 Codex 后台任务。")
 
     last_error: RuntimeError | None = None
     for attempt in range(1, MAX_CODEX_RETRIES + 1):
@@ -90,20 +118,11 @@ def _run_codex_prompt(
             process = None
             try:
                 output_path = Path(temp_dir) / "codex-last-message.md"
-                command = [
-                    "codex",
-                    "exec",
-                    "--json",
-                    "--skip-git-repo-check",
-                    "--dangerously-bypass-approvals-and-sandbox",
-                    "--cd",
-                    str(workdir.resolve()),
-                    "--model",
-                    model or DEFAULT_MODEL,
-                    "--output-last-message",
-                    str(output_path),
-                    "-",
-                ]
+                command = _build_codex_command(
+                    workdir=workdir,
+                    model=model,
+                    output_path=output_path,
+                )
                 process = subprocess.Popen(
                     command,
                     stdin=subprocess.PIPE,
@@ -113,6 +132,7 @@ def _run_codex_prompt(
                     encoding="utf-8",
                     errors="replace",
                     start_new_session=True,
+                    env=_child_env(),
                 )
                 if process_callback:
                     process_callback(process)
@@ -172,6 +192,7 @@ def _run_codex_prompt(
     raise last_error or RuntimeError("Codex execution failed.")
 
 
+
 def run_text_prompt(
     prompt_text: str,
     *,
@@ -189,6 +210,7 @@ def run_text_prompt(
         should_abort=should_abort,
         process_callback=process_callback,
     )
+
 
 
 def run_prompt_on_document(

@@ -65,7 +65,7 @@ class PaperReaderAppTests(unittest.TestCase):
         self.client = self.app.test_client()
         with self.client.session_transaction() as session:
             session["authenticated"] = True
-            session["username"] = "admin"
+            session["username"] = "nolan"
 
     def tearDown(self) -> None:
         try:
@@ -432,8 +432,8 @@ class PaperReaderAppTests(unittest.TestCase):
         response = client.post(
             "/login",
             data={
-                "username": "admin",
-                "password": "paperpaperreaderreader12678",
+                "username": "nolan",
+                "password": "kujyoai",
                 "next": "/",
             },
             follow_redirects=False,
@@ -453,7 +453,7 @@ class PaperReaderAppTests(unittest.TestCase):
         for _ in range(3):
             response = client.post(
                 "/login",
-                data={"username": "admin", "password": "wrong", "next": "/"},
+                data={"username": "nolan", "password": "wrong", "next": "/"},
                 follow_redirects=True,
             )
 
@@ -463,7 +463,7 @@ class PaperReaderAppTests(unittest.TestCase):
 
         blocked = client.post(
             "/login",
-            data={"username": "admin", "password": "paperpaperreaderreader12678", "next": "/"},
+            data={"username": "nolan", "password": "kujyoai", "next": "/"},
             follow_redirects=True,
         )
         self.assertIn("当前已锁定", blocked.get_data(as_text=True))
@@ -471,7 +471,7 @@ class PaperReaderAppTests(unittest.TestCase):
         timeline["value"] += 301
         success = client.post(
             "/login",
-            data={"username": "admin", "password": "paperpaperreaderreader12678", "next": "/"},
+            data={"username": "nolan", "password": "kujyoai", "next": "/"},
             follow_redirects=False,
         )
         self.assertEqual(success.status_code, 302)
@@ -491,7 +491,7 @@ class PaperReaderAppTests(unittest.TestCase):
 
         default_login = client.post(
             "/login",
-            data={"username": "admin", "password": "paperpaperreaderreader12678", "next": "/"},
+            data={"username": "nolan", "password": "kujyoai", "next": "/"},
             follow_redirects=True,
         )
         self.assertIn("用户名或密码错误", default_login.get_data(as_text=True))
@@ -828,7 +828,7 @@ class PaperReaderAppTests(unittest.TestCase):
         client = fresh_app.test_client()
         with client.session_transaction() as session:
             session["authenticated"] = True
-            session["username"] = "admin"
+            session["username"] = "nolan"
 
         with patch.object(fresh_app.library, "iter_documents", side_effect=AssertionError("should not rescan tree")):
             response = client.get("/")
